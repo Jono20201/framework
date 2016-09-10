@@ -1,9 +1,8 @@
 <?php
 
-use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Capsule\Manager as DB;
 use Illuminate\Database\Eloquent\Model as Eloquent;
+use Illuminate\Database\Schema\Blueprint;
 
 class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestCase
 {
@@ -29,21 +28,28 @@ class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestC
      */
     public function createSchema()
     {
-        $this->schema()->create('users', function ($table) {
+        $this->schema()->create('users', function (Blueprint $table) {
             $table->increments('id');
             $table->string('email')->unique();
             $table->timestamps();
         });
 
-        $this->schema()->create('posts', function ($table) {
+        $this->schema()->create('categories', function (Blueprint $table) {
             $table->increments('id');
+            $table->string('name');
+            $table->timestamps();
+        });
+
+        $this->schema()->create('posts', function (Blueprint $table) {
+            $table->increments('id');
+            $table->integer('category_id');
             $table->integer('user_id');
             $table->string('title');
             $table->text('body');
             $table->timestamps();
         });
 
-        $this->schema()->create('comments', function ($table) {
+        $this->schema()->create('comments', function (Blueprint $table) {
             $table->increments('id');
             $table->integer('commentable_id');
             $table->string('commentable_type');
@@ -52,7 +58,7 @@ class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestC
             $table->timestamps();
         });
 
-        $this->schema()->create('likes', function ($table) {
+        $this->schema()->create('likes', function (Blueprint $table) {
             $table->increments('id');
             $table->integer('likeable_id');
             $table->string('likeable_type');
@@ -68,6 +74,7 @@ class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestC
     public function tearDown()
     {
         $this->schema()->drop('users');
+        $this->schema()->drop('categories');
         $this->schema()->drop('posts');
         $this->schema()->drop('comments');
     }
@@ -116,22 +123,41 @@ class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestC
         $this->assertEquals(TestUser::first(), $like->likeable->owner);
     }
 
+    public function testItIgnoresNestedPolymorphicRelationsThatDontExist()
+    {
+        $this->seedData();
+
+        $like = TestLike::with('likeable.category')->get()->where('likeable_type', 'TestPost')->first();
+
+        $this->assertTrue($like->relationLoaded('likeable'));
+        $this->assertTrue($like->likeable->relationLoaded('category'));
+
+        $this->assertEquals(TestCategory::first(), $like->likeable->category);
+    }
+
     /**
      * Helpers...
      */
     protected function seedData()
     {
-        $taylor = TestUser::create(['id' => 1, 'email' => 'taylorotwell@gmail.com']);
+        $taylor = TestUser::create([
+            'id' => 1,
+            'email' => 'taylorotwell@gmail.com'
+        ]);
 
-        $taylor->posts()->create(['title' => 'A title', 'body' => 'A body'])
-            ->comments()->create(['body' => 'A comment body', 'user_id' => 1])
-            ->likes()->create([]);
+        TestCategory::create(['id' => 1, 'name' => 'Generic Category']);
+
+        $post = $taylor->posts()->create(['category_id' => 1, 'title' => 'A title', 'body' => 'A body']);
+        $comment = $post->comments()->create(['body' => 'A comment body', 'user_id' => 1]);
+
+        $comment->likes()->create([]);
+        $post->likes()->create([]);
     }
 
     /**
      * Get a database connection instance.
      *
-     * @return Connection
+     * @return \Illuminate\Database\ConnectionInterface
      */
     protected function connection()
     {
@@ -141,7 +167,7 @@ class DatabaseEloquentPolymorphicIntegrationTest extends PHPUnit_Framework_TestC
     /**
      * Get a schema builder instance.
      *
-     * @return Schema\Builder
+     * @return \Illuminate\Database\Schema\Builder
      */
     protected function schema()
     {
@@ -166,6 +192,20 @@ class TestUser extends Eloquent
 /**
  * Eloquent Models...
  */
+class TestCategory extends Eloquent
+{
+    protected $table = 'categories';
+    protected $guarded = [];
+
+    public function posts()
+    {
+        return $this->belongsTo(TestPost::class, 'post_id');
+    }
+}
+
+/**
+ * Eloquent Models...
+ */
 class TestPost extends Eloquent
 {
     protected $table = 'posts';
@@ -179,6 +219,16 @@ class TestPost extends Eloquent
     public function owner()
     {
         return $this->belongsTo(TestUser::class, 'user_id');
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(TestCategory::class, 'category_id');
+    }
+
+    public function likes()
+    {
+        return $this->morphMany(TestLike::class, 'likeable');
     }
 }
 
